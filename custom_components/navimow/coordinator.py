@@ -95,7 +95,7 @@ class NavimowCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             metrics=None,
         )
 
-    async def _async_ensure_valid_token(self) -> str | None:
+    async def async_ensure_valid_token(self) -> str | None:
         if not self.oauth_session:
             return None
         try:
@@ -127,7 +127,7 @@ class NavimowCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # 若仅在 HTTP fallback 时刷新，MQTT 正常推数据期间 token 长期不更新，
         # 过期后用户下发指令会立即收到 CODE_OAUTH_INFO_ILLEGAL。
         try:
-            await self._async_ensure_valid_token()
+            await self.async_ensure_valid_token()
         except ConfigEntryAuthFailed:
             raise
 

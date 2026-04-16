@@ -145,7 +145,7 @@ class NavimowLawnMower(CoordinatorEntity[NavimowCoordinator], LawnMowerEntity):
 
     async def _async_send_command(self, command: MowerCommand, label: str) -> None:
         """发送指令前先刷新 token，避免 token 过期导致 CODE_OAUTH_INFO_ILLEGAL。"""
-        await self.coordinator._async_ensure_valid_token()
+        await self.coordinator.async_ensure_valid_token()
         await self._api.async_send_command(self._device_id, command)
         _LOGGER.info("%s for device %s", label, self._device_id)
         await self.coordinator.async_request_refresh()

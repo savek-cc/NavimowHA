@@ -182,39 +182,62 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _unload_flag: list[bool] = [False]
 
         def _attach_mqtt_debug_hooks(sdk: NavimowSDK, api: MowerAPI) -> None:
-            mqtt = sdk._mqtt
-            original_on_message = mqtt.on_message
+            # Debug hooks reach into private SDK internals (sdk._mqtt, mqtt._use_tls,
+            # client._client_id). We intentionally keep them — they are essential
+            # for production MQTT debugging — but only attach when the caller has
+            # DEBUG-level logging enabled, so the fragile coupling is a no-op in
+            # normal operation. Every private attribute access is further wrapped
+            # in getattr() fallbacks so an SDK refactor cannot crash setup.
+            if not _LOGGER.isEnabledFor(logging.DEBUG):
+                return
+
+            mqtt = getattr(sdk, "_mqtt", None)
+            if mqtt is None:
+                _LOGGER.debug(
+                    "MQTT debug hooks skipped: sdk._mqtt unavailable "
+                    "(SDK internal layout changed?)"
+                )
+                return
+
+            client = getattr(mqtt, "client", None)
+            original_on_message = getattr(mqtt, "on_message", None)
+
             def _get_client_id() -> str:
-                client_id_bytes = getattr(mqtt.client, "_client_id", b"")
+                if client is None:
+                    return "<no-client>"
+                client_id_bytes = getattr(client, "_client_id", b"")
                 if isinstance(client_id_bytes, (bytes, bytearray)):
                     return client_id_bytes.decode("utf-8", errors="replace") or "<empty>"
                 return str(client_id_bytes) if client_id_bytes else "<empty>"
 
+            def _mqtt_attr(name: str, default: Any = None) -> Any:
+                return getattr(mqtt, name, default)
+
             async def _on_connected() -> None:
                 _LOGGER.info(
                     "MQTT connected callback: broker=%s port=%s ws_path=%s tls=%s client_id=%s",
-                    mqtt.broker,
-                    mqtt.port,
-                    mqtt.ws_path,
-                    mqtt._use_tls,
+                    _mqtt_attr("broker"),
+                    _mqtt_attr("port"),
+                    _mqtt_attr("ws_path"),
+                    _mqtt_attr("_use_tls"),
                     _get_client_id(),
                 )
 
             async def _on_ready() -> None:
                 _LOGGER.info(
                     "MQTT ready callback: subscribed to downlink topics on broker=%s port=%s client_id=%s",
-                    mqtt.broker,
-                    mqtt.port,
+                    _mqtt_attr("broker"),
+                    _mqtt_attr("port"),
                     _get_client_id(),
                 )
 
             async def _on_disconnected() -> None:
                 _LOGGER.debug(
                     "MQTT disconnected callback: broker=%s port=%s ws_path=%s tls=%s client_id=%s",
-                    mqtt.broker,
-                    mqtt.port,
-                    mqtt.ws_path,
-                    mqtt._use_tls,
+                    _mqtt_attr("broker"),
+                    _mqtt_attr("port"),
+                    _mqtt_attr("ws_path"),
+                    _mqtt_attr("_use_tls"),
                     _get_client_id(),
                 )
                 if _unload_flag[0]:
@@ -253,16 +276,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     "MQTT subscribed: mid=%s granted_qos=%s broker=%s port=%s client_id=%s",
                     mid,
                     granted_qos,
-                    mqtt.broker,
-                    mqtt.port,
+                    _mqtt_attr("broker"),
+                    _mqtt_attr("port"),
                     _get_client_id(),
                 )
 
             def _on_log(_client, _userdata, level, buf):
                 _LOGGER.debug("MQTT client log: level=%s msg=%s", level, buf)
 
-            mqtt.client.on_subscribe = _on_subscribe
-            mqtt.client.on_log = _on_log
+            if client is not None:
+                client.on_subscribe = _on_subscribe
+                client.on_log = _on_log
+            else:
+                _LOGGER.debug(
+                    "MQTT paho client hooks skipped: mqtt.client unavailable"
+                )
 
         async def _probe_mqtt_status(sdk: NavimowSDK) -> None:
             await asyncio.sleep(5)

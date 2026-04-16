@@ -1,91 +1,276 @@
-# Navimow for Home Assistant
+# Navimow Integration for Home Assistant
 
-<p align="center">
-  <img src="https://fra-navimow-prod.s3.eu-central-1.amazonaws.com/img/navimowhomeassistant.png" width="600">
-</p>
+Cloud integration for Segway Navimow robotic mowers. Exposes each mower as a
+native `lawn_mower` entity in Home Assistant, with a diagnostic battery sensor
+and real-time state updates via MQTT push.
 
-Monitor and control Navimow robotic mowers in Home Assistant.
+## Features
 
-[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=segwaynavimow&repository=NavimowHA&category=Integration)
+- Native `lawn_mower` entity per device with `start_mowing`, `pause`, `dock`,
+  and `resume` actions
+- Diagnostic `sensor.*_battery` entity (battery percentage, `SensorDeviceClass.BATTERY`)
+- Real-time state updates via MQTT push from the Segway cloud
+- Automatic HTTP polling fallback (every 60 s) when MQTT is stale for more
+  than 5 minutes
+- Extra state attributes: status, signal strength, position, error code,
+  device metrics
+- Diagnostics download (`last_data_source`, MQTT staleness, HTTP fallback
+  activity) from the integration's "Download Diagnostics" menu
+- OAuth2 config flow — no manual credentials entered in the UI
+- Multi-device support (all mowers bound to the Segway account appear as
+  separate devices)
 
-## Features ✨
+## Supported Devices
 
-### Mower Control
+- Segway Navimow **i-Series** (i105E, i108E, i110N, i115N, etc.)
+- Segway Navimow **H-Series** (H800E, H1500E, H3000E, etc.)
+- Segway Navimow **X-Series** (X3, X315, X330, X350, etc.)
 
-Control your mower directly from Home Assistant:
+Any mower that the official Segway Navimow app exposes through the Segway
+cloud API should work. Firmware restrictions are enforced by the cloud, not
+by this integration — if the app can talk to it, the integration can too.
 
-* Start mowing
-* Pause mowing
-* Resume mowing
-* Send mower to dock
+The integration currently targets the **EU server** of the Segway API
+(`navimow-fra.ninebot.com`). Accounts registered on other regional servers
+(US, APAC, CN) are not supported at this time.
 
-### Device Monitoring
+## Installation
 
-Keep track of mower status and health:
+### HACS (recommended)
 
-* Real-time mower state
-* Battery level sensor
-* Integration with Home Assistant dashboards
+1. Open HACS → Integrations → top-right menu → **Custom repositories**
+2. Add the repository:
+   - Repository URL: `https://github.com/segwaynavimow/NavimowHA`
+   - Category: **Integration**
+3. Search for **Navimow** in HACS and install
+4. Restart Home Assistant
+5. Go to **Settings → Devices & Services → Add Integration** and search
+   for **Navimow**
 
-### Real-Time Communication
+### Manual
 
-* **MQTT-based real-time communication**
-* Fast state updates and reliable device synchronization
+```bash
+cd /config
+git clone https://github.com/segwaynavimow/NavimowHA.git /tmp/NavimowHA
+mkdir -p custom_components
+cp -r /tmp/NavimowHA/custom_components/navimow custom_components/
+```
 
-### Native Home Assistant Integration
+Restart Home Assistant, then add the integration from **Settings → Devices
+& Services**.
 
-* Native **`lawn_mower` entity**
-* Fully compatible with **Home Assistant automations**
-* Device and entity model aligned with HA standards
+### Prerequisites
 
-### Continuous Development
+- Home Assistant **2026.1.0** or newer
+- Outbound internet access from HA to `*.ninebot.com` and
+  `*.willand.com` (HTTPS and WebSocket)
+- A Segway Navimow account that works in the official mobile app
+- The Python package `navimow-sdk==0.1.2` (installed automatically from
+  `manifest.json` requirements)
 
-This integration is **under active development**.
+## Configuration
 
-**More features are being added all the time**, including additional sensors, diagnostics, and deeper Home Assistant automation support.
+Configuration is performed entirely through the Home Assistant UI. There are
+no YAML options and no manual parameters.
 
-## Prerequisites 📋
+When you add the integration:
 
-- **Warning**: Home Assistant minimum version **2026.1.0**
-- **Account**: your Navimow account can sign in to the official app (used for authorization)
+1. Click **Add Integration** → **Navimow**
+2. HA opens a browser window pointing at the Segway login page
+3. Sign in with your Segway Navimow account
+4. The browser redirects back to Home Assistant and the config entry is
+   created; all devices bound to the account are discovered automatically
 
-## Installation 🛠️
+OAuth2 client credentials are currently shipped inside `const.py`. A future
+release will migrate to the standard `application_credentials` helper so users
+can override them if Segway rotates the values.
 
-This integration is not in the default HACS store. You must add it as a custom repository.
+### Configuration options (Options Flow)
 
-This integration will be installed as a custom repository in HACS:
+No runtime options are currently exposed in the Options Flow. The following
+values are defined as constants in `custom_components/navimow/const.py` and
+can only be changed by editing the source:
 
-1. HACS → Integrations → top-right menu → **Custom repositories**
-2. Repository: `https://github.com/segwaynavimow/NavimowHA`
-3. Category: Integration
-4. Search for `Navimow` in HACS and install it
-5. Restart Home Assistant
-6. Settings → Devices & Services → Add Integration → search `Navimow`
+| Constant                     | Default           | Purpose                                                   |
+|------------------------------|-------------------|-----------------------------------------------------------|
+| `UPDATE_INTERVAL`            | `30` s            | Coordinator tick — how often cached MQTT state is pushed  |
+| `MQTT_STALE_SECONDS`         | `300` s           | After this long without MQTT traffic, HTTP fallback runs  |
+| `HTTP_FALLBACK_MIN_INTERVAL` | `3600` s          | Minimum gap between HTTP fallback fetches (rate limiting) |
+| `API_BASE_URL`               | EU server         | Segway cloud endpoint                                     |
 
-## Usage 🎮
+## How data is updated
 
-See the [Getting Started](https://github.com/segwaynavimow/NavimowHA/wiki/Getting-Started).
+The integration prefers MQTT push and only falls back to HTTP polling when
+push is stale.
 
-Once the integration is set up, you can control and monitor your Navimow mower using Home Assistant! 🎉
+- **MQTT push (primary).** On startup, the integration calls
+  `/mqtt/userInfo/get/v2` to obtain WebSocket MQTT credentials and connects
+  to the Segway broker. State (`DeviceStateMessage`) and attribute
+  (`DeviceAttributesMessage`) updates are delivered in near real time and
+  pushed straight into the coordinator via `async_set_updated_data`.
+- **HTTP fallback.** The coordinator ticks every 30 s. If no MQTT message
+  has been received for more than `MQTT_STALE_SECONDS` (default 300 s), it
+  calls `GET /device/status` — rate-limited to at most once every
+  `HTTP_FALLBACK_MIN_INTERVAL` (default 3600 s) to avoid hammering the API.
+- **Circuit breaker handling.** The Segway API applies a circuit breaker to
+  `/mqtt/userInfo/get/v2`. If that endpoint fails during setup, the
+  integration falls back to MQTT credentials cached in the config entry from
+  the previous successful run. Real-time updates may be delayed until the
+  Segway API recovers, but the entity stays available via HTTP fallback.
+- **OAuth token refresh.** The token is refreshed on every coordinator tick
+  and before each outbound command. On MQTT disconnect, MQTT credentials
+  are re-fetched (they are tied to the OAuth token and become invalid when
+  the token rotates).
+- **Data source reporting.** The coordinator exposes `last_data_source`
+  (`mqtt_push`, `mqtt_cache`, or `http_fallback`) via the Diagnostics
+  download.
 
-After setup, you should see:
+## Supported Actions
 
-- A `lawn_mower` entity (start/pause/dock/resume)
-- A battery `sensor`
+The `lawn_mower` entity implements the standard HA actions:
 
-## Troubleshooting 🔧
+```yaml
+# Start mowing
+action: lawn_mower.start_mowing
+target:
+  entity_id: lawn_mower.navimow
 
-If you encounter any issues with the Navimow integration, please check the Home Assistant logs for error messages. You can also try the following steps:
+# Pause an active mow
+action: lawn_mower.pause
+target:
+  entity_id: lawn_mower.navimow
 
-- Ensure that your mower is connected to your home network and accessible from Home Assistant.
-- Restart Home Assistant and check if the issue persists.
-- Make sure you are not blocking network access to services in China (if applicable to your environment).
-- If you are using DNS filtering/ad-blocking, try disabling it temporarily.
+# Send back to the charging dock
+action: lawn_mower.dock
+target:
+  entity_id: lawn_mower.navimow
+```
 
-If the problem continues, please file an issue on GitHub and include relevant log snippets:
+The integration also implements `async_resume`, which can be called via
+`lawn_mower.start_mowing` from a paused state (HA maps START to resume when
+the current activity is `paused`).
 
-- `https://github.com/segwaynavimow/NavimowHA/issues`
+## Example automations
 
-## Navimow SDK Library 📚
+Start mowing in the morning if the weather is dry:
 
-This integration uses `navimow-sdk` to communicate with Navimow mowers. `navimow-sdk` provides the Python API used by this integration (details will be expanded in the SDK documentation).
+```yaml
+alias: Navimow - mow when dry
+triggers:
+  - trigger: time
+    at: "09:00:00"
+conditions:
+  - condition: numeric_state
+    entity_id: sensor.openweathermap_forecast_precipitation_probability
+    below: 30
+  - condition: state
+    entity_id: lawn_mower.navimow
+    state: docked
+actions:
+  - action: lawn_mower.start_mowing
+    target:
+      entity_id: lawn_mower.navimow
+```
+
+Send the mower home when rain is detected:
+
+```yaml
+alias: Navimow - dock on rain
+triggers:
+  - trigger: state
+    entity_id: binary_sensor.rain_detected
+    to: "on"
+actions:
+  - action: lawn_mower.dock
+    target:
+      entity_id: lawn_mower.navimow
+```
+
+Notify when battery drops below 20 %:
+
+```yaml
+alias: Navimow - low battery alert
+triggers:
+  - trigger: numeric_state
+    entity_id: sensor.navimow_battery
+    below: 20
+actions:
+  - action: notify.mobile_app
+    data:
+      message: "Navimow battery at {{ states('sensor.navimow_battery') }} %"
+```
+
+## Known limitations
+
+- **Cloud-only.** There is no local control path. Any outage of the Segway
+  cloud API or MQTT broker will affect the integration.
+- **Circuit breaker on MQTT credentials.** The Segway API applies a circuit
+  breaker to `/mqtt/userInfo/get/v2`. When it trips, the integration falls
+  back to cached MQTT credentials; real-time updates may be unavailable
+  until the API recovers.
+- **Cutting-height control is not exposed.** The Segway cloud API does not
+  offer a REST endpoint for blade height — only the mobile app can set it.
+- **Map and zone management is not supported.** Mowing zones, no-go areas,
+  and map editing remain in the Segway Navimow app.
+- **EU server only.** The integration hard-codes the Frankfurt
+  (`navimow-fra.ninebot.com`) endpoint; US / APAC / CN accounts are not
+  supported.
+- **Client credentials hard-coded.** `CLIENT_ID` and `CLIENT_SECRET` live in
+  `const.py`. A future release will migrate to `application_credentials`.
+
+## Troubleshooting
+
+Enable debug logging before reproducing an issue by adding this to
+`configuration.yaml` and restarting Home Assistant:
+
+```yaml
+logger:
+  default: info
+  logs:
+    custom_components.navimow: debug
+    mower_sdk: debug
+```
+
+**OAuth login fails or the browser returns an error.**
+Make sure your HA instance can reach `navimow-h5-fra.willand.com` and
+`navimow-fra.ninebot.com`. If you use DNS filtering or ad-blocking,
+temporarily disable it — some lists block `*.ninebot.com`. Re-trigger the
+flow from **Settings → Devices & Services → Navimow → Reconfigure**.
+
+**Entity is available but state never changes (no real-time updates).**
+MQTT push is probably not connected. Enable debug logging (above), restart
+HA, and grep the log for `MQTT connected callback` / `MQTT status probe`.
+If MQTT is down, the entity still updates via HTTP fallback every hour; a
+full recovery typically happens automatically once the Segway API's
+circuit breaker closes again. Check diagnostics
+(**Download Diagnostics** on the device page) — `last_data_source` should
+eventually read `mqtt_push`.
+
+**Device shows as unavailable.**
+This means neither MQTT nor the HTTP fallback produced any state. Verify
+that the mower is online in the official Navimow app. If the app shows it
+online but HA does not, capture a debug log covering a full HA restart and
+file an issue.
+
+## Removing the integration
+
+1. **Settings → Devices & Services** → open the Navimow entry → three-dot
+   menu → **Delete**. HA removes the config entry, all entities, and the
+   device registry records.
+2. Remove the custom component:
+   - **HACS**: HACS → Integrations → Navimow → three-dot menu → **Remove**
+   - **Manual install**: delete `config/custom_components/navimow/`
+3. Restart Home Assistant.
+4. Optionally revoke the authorization in the Segway Navimow app (Account
+   → Third-party authorizations).
+
+## Contributing / Issues
+
+Issues and pull requests are welcome at
+<https://github.com/segwaynavimow/NavimowHA/issues>. Development happens on
+the `quality_improvements` branch; please target PRs there.
+
+## License
+
+See the `LICENSE` file in the repository root. Absent a `LICENSE` file, refer
+to the upstream repository.

@@ -45,6 +45,7 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
             CLIENT_SECRET,
         ),
     )
+    async_setup_services(hass)
     return True
 
 
@@ -54,10 +55,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     from mower_sdk.api import MowerAPI
     from mower_sdk.errors import MowerAPIError
     from mower_sdk.sdk import NavimowSDK
-    
+
     from .coordinator import NavimowCoordinator
-    
-    hass.data.setdefault(DOMAIN, {})
 
     def _mask_secret(value: str | None) -> str:
         if not value:
@@ -117,8 +116,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         except ConfigEntryAuthFailed:
             raise
         except Exception as err:
-            _LOGGER.error("Authentication failed during device discovery: %s", err)
-            raise ConfigEntryAuthFailed(f"Authentication failed: {err}") from err
+            _LOGGER.error("Network or API error during device discovery: %s", err)
+            raise ConfigEntryNotReady(f"Error during device discovery: {err}") from err
 
         if not devices:
             _LOGGER.warning("No Navimow devices found")
@@ -126,9 +125,31 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # 获取 MQTT 连接信息并创建 SDK
         try:
             mqtt_info = await api.async_get_mqtt_user_info()
+            # Cache credentials in entry.data so they survive transient API outages
+            _cached = {
+                "cached_mqtt_host": mqtt_info.get("mqttHost"),
+                "cached_mqtt_url": mqtt_info.get("mqttUrl"),
+                "cached_mqtt_username": mqtt_info.get("userName"),
+                "cached_mqtt_password": mqtt_info.get("pwdInfo"),
+            }
+            hass.config_entries.async_update_entry(entry, data={**entry.data, **_cached})
         except MowerAPIError as err:
-            _LOGGER.error("Failed to get MQTT info: %s", err)
-            raise ConfigEntryNotReady(f"Failed to get MQTT info: {err}") from err
+            # The Segway API applies a circuit-breaker on this endpoint.
+            # Repeated HA retries keep the breaker open indefinitely.
+            # Treat failure as non-fatal: fall back to cached credentials.
+            # The coordinator's hourly HTTP fallback keeps the entity available.
+            _LOGGER.warning(
+                "Failed to get MQTT user info (%s) — falling back to cached/default "
+                "MQTT config. Real-time MQTT updates may be unavailable until the "
+                "Segway API recovers.",
+                err,
+            )
+            mqtt_info = {
+                "mqttHost": entry.data.get("cached_mqtt_host"),
+                "mqttUrl": entry.data.get("cached_mqtt_url"),
+                "userName": entry.data.get("cached_mqtt_username"),
+                "pwdInfo": entry.data.get("cached_mqtt_password"),
+            }
 
         mqtt_host = mqtt_info.get("mqttHost") or entry.data.get(
             "mqtt_broker", MQTT_BROKER
@@ -338,7 +359,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         sdk = await hass.async_add_executor_job(_create_sdk, api)
         _attach_mqtt_debug_hooks(sdk, api)
-        async_setup_services(hass, api)
         hass.async_create_task(_probe_mqtt_status(sdk))
 
         coordinators: dict[str, NavimowCoordinator] = {}
@@ -355,7 +375,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             coordinators[device.id] = coordinator
 
         # 存储数据
-        hass.data[DOMAIN][entry.entry_id] = {
+        entry.runtime_data = {
             "sdk": sdk,
             "api": api,
             "devices": devices,
@@ -382,8 +402,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     if unload_ok:
         # 清理数据
-        if entry.entry_id in hass.data.get(DOMAIN, {}):
-            data = hass.data[DOMAIN][entry.entry_id]
+        if entry.runtime_data:
+            data = entry.runtime_data
             # 标记正在卸载，阻止断连回调触发新的凭据刷新
             if "unload_flag" in data:
                 data["unload_flag"][0] = True
@@ -393,8 +413,6 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     sdk.disconnect()
                 except Exception as err:
                     _LOGGER.warning("Error disconnecting MQTT: %s", err)
-
-            hass.data[DOMAIN].pop(entry.entry_id)
 
     return unload_ok
 

@@ -24,7 +24,6 @@ from .const import (
     MQTT_USERNAME,
     MQTT_PASSWORD,
 )
-from .services import async_setup_services
 
 _LOGGER = logging.getLogger(__name__)
 _LOGGER.debug("Navimow module imported (__init__.py)")
@@ -47,7 +46,6 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
             CLIENT_SECRET,
         ),
     )
-    async_setup_services(hass)
     return True
 
 

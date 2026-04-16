@@ -1,6 +1,8 @@
 """Lawn mower platform for Navimow integration."""
+from __future__ import annotations
+
 import logging
-from typing import Any
+from typing import Any, Final
 
 from homeassistant.components.lawn_mower import (
     LawnMowerActivity,
@@ -17,8 +19,19 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from mower_sdk.api import MowerAPI
 from mower_sdk.models import DeviceStateMessage, MowerCommand
 
-from .const import DOMAIN, MOWER_STATUS_TO_ACTIVITY
+from .const import DOMAIN
 from .coordinator import NavimowCoordinator
+
+_STATUS_TO_ACTIVITY: Final[dict[str, LawnMowerActivity]] = {
+    "idle": LawnMowerActivity.DOCKED,
+    "mowing": LawnMowerActivity.MOWING,
+    "paused": LawnMowerActivity.PAUSED,
+    "docked": LawnMowerActivity.DOCKED,
+    "charging": LawnMowerActivity.DOCKED,
+    "returning": LawnMowerActivity.MOWING,  # returning to dock = still active
+    "error": LawnMowerActivity.ERROR,
+    "unknown": LawnMowerActivity.ERROR,
+}
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -100,15 +113,12 @@ class NavimowLawnMower(CoordinatorEntity[NavimowCoordinator], LawnMowerEntity):
         return super().available
 
     @property
-    def activity(self) -> LawnMowerActivity:
+    def activity(self) -> LawnMowerActivity | None:
         """Return the current activity of the lawn mower."""
         state = self.coordinator.get_device_state()
         if not state:
             return None
-        activity = MOWER_STATUS_TO_ACTIVITY.get(state.state)
-        if activity is None:
-            return None
-        return LawnMowerActivity(activity)
+        return _STATUS_TO_ACTIVITY.get(state.state)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:

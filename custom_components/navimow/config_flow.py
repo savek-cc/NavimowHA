@@ -3,10 +3,16 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+import voluptuous as vol
+
 from homeassistant import config_entries
 from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers import config_entry_oauth2_flow
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+from mower_sdk.api import MowerAPI
+from mower_sdk.errors import MowerAPIError
 
 from .auth import NavimowOAuth2Implementation
 from .const import (
@@ -108,7 +114,7 @@ class NavimowOAuth2FlowHandler(
         if user_input is None:
             return self.async_show_form(
                 step_id="reauth_confirm",
-                data_schema=None,
+                data_schema=vol.Schema({}),
             )
 
         # 仅一个 OAuth2 实现，直接进入授权步骤
@@ -116,8 +122,24 @@ class NavimowOAuth2FlowHandler(
 
     async def async_oauth_create_entry(self, data: dict[str, Any]) -> FlowResult:
         """Create an entry for the flow, or update existing entry for reauth."""
-        # HA 已经自动处理了 token 交换，data["token"] 已包含 token 信息
-        # 如果是 reauth，HA 会自动更新 entry
+        # Probe API before creating/updating the config entry (test-before-configure).
+        access_token = data.get("token", {}).get("access_token")
+        if not access_token:
+            return self.async_abort(reason="oauth_error")
+        probe_api = MowerAPI(
+            session=async_get_clientsession(self.hass),
+            token=access_token,
+            base_url=API_BASE_URL,
+        )
+        try:
+            await probe_api.async_get_devices()
+        except MowerAPIError as err:
+            _LOGGER.error("Test-before-configure probe failed: %s", err)
+            return self.async_abort(reason="cannot_connect")
+        except Exception as err:
+            _LOGGER.exception("Unexpected error during config-flow probe: %s", err)
+            return self.async_abort(reason="unknown")
+
         if self.source == config_entries.SOURCE_REAUTH:
             existing_entry = self.entry
             self.hass.config_entries.async_update_entry(

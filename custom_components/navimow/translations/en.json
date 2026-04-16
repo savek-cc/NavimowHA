@@ -25,7 +25,10 @@
     "abort": {
       "single_instance_allowed": "Only one Navimow instance is allowed.",
       "already_configured": "Navimow is already configured.",
-      "reauth_successful": "Re-authentication successful."
+      "reauth_successful": "Re-authentication successful.",
+      "cannot_connect": "Unable to connect to Navimow service. Please try again later.",
+      "unknown": "An unexpected error occurred. Please try again.",
+      "oauth_error": "OAuth token exchange did not return a valid access token."
     }
   },
   "options": {

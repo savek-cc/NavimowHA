@@ -25,7 +25,10 @@
     "abort": {
       "single_instance_allowed": "Nur eine Navimow-Instanz ist zulässig.",
       "already_configured": "Navimow ist bereits konfiguriert.",
-      "reauth_successful": "Erneute Authentifizierung erfolgreich."
+      "reauth_successful": "Erneute Authentifizierung erfolgreich.",
+      "cannot_connect": "Verbindung zum Navimow-Dienst nicht möglich. Bitte versuchen Sie es später erneut.",
+      "unknown": "Ein unerwarteter Fehler ist aufgetreten. Bitte versuchen Sie es erneut.",
+      "oauth_error": "Der OAuth-Token-Austausch hat kein gültiges Zugriffstoken zurückgegeben."
     }
   },
   "options": {

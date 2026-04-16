@@ -183,6 +183,9 @@ class NavimowCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return self.data
 
     def _handle_state(self, state: DeviceStateMessage) -> None:
+        # 注意：此方法运行在 paho MQTT 后台线程。除转发到事件循环外，
+        # 不得修改 coordinator 的可变状态（包括 _last_mqtt_update），
+        # 以保证与 _async_update_data 的读取间不存在跨线程数据竞争。
         if state.device_id != self.device.id:
             return
         _LOGGER.debug(
@@ -191,11 +194,12 @@ class NavimowCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             state.state,
             state.battery,
         )
-        self._last_mqtt_update = time.monotonic()
-        self._last_data_source = "mqtt_push"
-        self.hass.loop.call_soon_threadsafe(self._update_from_state, state)
+        mqtt_ts = time.monotonic()
+        self.hass.loop.call_soon_threadsafe(self._update_from_state, state, mqtt_ts)
 
     def _handle_attributes(self, attrs: DeviceAttributesMessage) -> None:
+        # 同 _handle_state：运行在 paho 后台线程，时间戳与状态写入必须
+        # 通过 call_soon_threadsafe 在事件循环中完成。
         if attrs.device_id != self.device.id:
             return
         _LOGGER.debug(
@@ -203,16 +207,20 @@ class NavimowCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             attrs.device_id,
             len(getattr(attrs, "__dict__", {}) or {}),
         )
-        self._last_mqtt_update = time.monotonic()
-        self.hass.loop.call_soon_threadsafe(self._update_from_attributes, attrs)
+        mqtt_ts = time.monotonic()
+        self.hass.loop.call_soon_threadsafe(self._update_from_attributes, attrs, mqtt_ts)
 
-    def _update_from_state(self, state: DeviceStateMessage) -> None:
+    def _update_from_state(self, state: DeviceStateMessage, mqtt_ts: float) -> None:
         self._last_state = state
+        self._last_mqtt_update = mqtt_ts
         self._last_data_source = "mqtt_push"
         self.async_set_updated_data(self._build_data())
 
-    def _update_from_attributes(self, attrs: DeviceAttributesMessage) -> None:
+    def _update_from_attributes(
+        self, attrs: DeviceAttributesMessage, mqtt_ts: float
+    ) -> None:
         self._last_attributes = attrs
+        self._last_mqtt_update = mqtt_ts
         self.async_set_updated_data(self._build_data())
 
     def get_device_state(self) -> DeviceStateMessage | None:

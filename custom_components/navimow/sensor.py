@@ -11,7 +11,7 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import PERCENTAGE
+from homeassistant.const import EntityCategory, PERCENTAGE
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -19,6 +19,8 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
 from .coordinator import NavimowCoordinator
+
+PARALLEL_UPDATES = 1
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -35,6 +37,7 @@ SENSOR_DESCRIPTIONS: tuple[NavimowSensorEntityDescription, ...] = (
         device_class=SensorDeviceClass.BATTERY,
         native_unit_of_measurement=PERCENTAGE,
         state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
         value_fn=lambda coordinator: (
             state.battery if (state := coordinator.get_device_state()) else None
         ),
@@ -48,9 +51,8 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Navimow sensors from a config entry."""
-    data = hass.data[DOMAIN][config_entry.entry_id]
-    devices = data["devices"]
-    coordinators: dict[str, NavimowCoordinator] = data["coordinators"]
+    devices = config_entry.runtime_data["devices"]
+    coordinators: dict[str, NavimowCoordinator] = config_entry.runtime_data["coordinators"]
 
     entities: list[NavimowSensor] = []
     for device in devices:

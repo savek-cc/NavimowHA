@@ -9,6 +9,7 @@ from homeassistant.components.lawn_mower import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -21,6 +22,8 @@ from .coordinator import NavimowCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
+PARALLEL_UPDATES = 1
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -28,10 +31,9 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up lawn mower entities from a config entry."""
-    data = hass.data[DOMAIN][config_entry.entry_id]
-    api: MowerAPI = data["api"]
-    devices = data["devices"]
-    coordinators: dict[str, NavimowCoordinator] = data["coordinators"]
+    api: MowerAPI = config_entry.runtime_data["api"]
+    devices = config_entry.runtime_data["devices"]
+    coordinators: dict[str, NavimowCoordinator] = config_entry.runtime_data["coordinators"]
 
     entities = []
     for device in devices:
@@ -51,6 +53,7 @@ async def async_setup_entry(
 class NavimowLawnMower(CoordinatorEntity[NavimowCoordinator], LawnMowerEntity):
     """Representation of a Navimow lawn mower."""
 
+    _attr_has_entity_name = True
     _attr_supported_features = (
         LawnMowerEntityFeature.START_MOWING
         | LawnMowerEntityFeature.PAUSE
@@ -73,7 +76,7 @@ class NavimowLawnMower(CoordinatorEntity[NavimowCoordinator], LawnMowerEntity):
         self._device_info = device_info
 
         # 设置实体属性
-        self._attr_name = device_name
+        self._attr_name = None
         self._attr_unique_id = f"{DOMAIN}_{device_id}"
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, self._device_id)},
@@ -141,36 +144,44 @@ class NavimowLawnMower(CoordinatorEntity[NavimowCoordinator], LawnMowerEntity):
         """Start mowing."""
         try:
             await self._async_send_command(MowerCommand.START, "Started mowing")
+        except HomeAssistantError:
+            raise
         except Exception as err:
             _LOGGER.error(
                 "Failed to start mowing for device %s: %s", self._device_id, err
             )
-            raise
+            raise HomeAssistantError(f"Failed to start mowing: {err}") from err
 
     async def async_pause(self) -> None:
         """Pause mowing."""
         try:
             await self._async_send_command(MowerCommand.PAUSE, "Paused mowing")
+        except HomeAssistantError:
+            raise
         except Exception as err:
             _LOGGER.error(
                 "Failed to pause mowing for device %s: %s", self._device_id, err
             )
-            raise
+            raise HomeAssistantError(f"Failed to pause mowing: {err}") from err
 
     async def async_dock(self) -> None:
         """Dock the mower."""
         try:
             await self._async_send_command(MowerCommand.DOCK, "Docked")
+        except HomeAssistantError:
+            raise
         except Exception as err:
             _LOGGER.error("Failed to dock device %s: %s", self._device_id, err)
-            raise
+            raise HomeAssistantError(f"Failed to dock: {err}") from err
 
     async def async_resume(self) -> None:
         """Resume mowing."""
         try:
             await self._async_send_command(MowerCommand.RESUME, "Resumed mowing")
+        except HomeAssistantError:
+            raise
         except Exception as err:
             _LOGGER.error(
                 "Failed to resume mowing for device %s: %s", self._device_id, err
             )
-            raise
+            raise HomeAssistantError(f"Failed to resume mowing: {err}") from err

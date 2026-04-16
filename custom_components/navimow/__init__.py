@@ -318,8 +318,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     _mask_secret(new_username),
                 )
 
-        def _create_sdk(api: MowerAPI) -> NavimowSDK:
-            sdk = NavimowSDK(
+        def _instantiate_sdk() -> NavimowSDK:
+            return NavimowSDK(
                 broker=mqtt_host,
                 port=mqtt_port,
                 username=mqtt_username,
@@ -333,6 +333,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 reconnect_min_delay=1,
                 reconnect_max_delay=60,
             )
+
+        def _sdk_connect(sdk: NavimowSDK) -> None:
             _LOGGER.info(
                 "Invoking SDK MQTT connect: broker=%s port=%s ws_path=%s",
                 mqtt_host,
@@ -340,10 +342,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 ws_path,
             )
             sdk.connect()
-            return sdk
 
-        sdk = await hass.async_add_executor_job(_create_sdk, api)
+        # Race-condition fix: instantiate SDK without connecting, attach hooks
+        # on the event loop (non-blocking attribute writes), then connect in
+        # the executor. This guarantees the first on_connected/on_ready
+        # callback is observed even on very fast broker handshakes.
+        sdk = await hass.async_add_executor_job(_instantiate_sdk)
         _attach_mqtt_debug_hooks(sdk, api)
+        await hass.async_add_executor_job(_sdk_connect, sdk)
         hass.async_create_task(_probe_mqtt_status(sdk))
 
         coordinators: dict[str, NavimowCoordinator] = {}

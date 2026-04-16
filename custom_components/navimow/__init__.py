@@ -1,4 +1,6 @@
 """The Navimow integration."""
+from __future__ import annotations
+
 import asyncio
 import logging
 from typing import Any
@@ -11,7 +13,7 @@ from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.helpers import config_entry_oauth2_flow
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .auth import NavimowOAuth2Implementation
+from .auth import NavimowOAuth2Implementation, async_get_oauth_token
 from .const import (
     DOMAIN,
     CLIENT_ID,
@@ -78,18 +80,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             hass, entry, implementation
         )
 
-        token: dict[str, Any] | None = None
-        if hasattr(oauth_session, "async_get_valid_token"):
-            try:
-                token = await oauth_session.async_get_valid_token()
-            except AttributeError:
-                token = None
-        if not token and hasattr(oauth_session, "async_ensure_token_valid"):
-            await oauth_session.async_ensure_token_valid()
-            token = oauth_session.token
-        if not token and hasattr(oauth_session, "async_get_access_token"):
-            access_token_value = await oauth_session.async_get_access_token()
-            token = {"access_token": access_token_value} if access_token_value else None
+        token = await async_get_oauth_token(oauth_session)
         if not token:
             # Final fallback for older HA versions storing token on the entry.
             token = entry.data.get("token")
@@ -292,13 +283,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             new_auth_headers: dict[str, str] | None = None
             try:
                 # 先刷新 OAuth token（oauth_session 来自外层闭包）
-                if hasattr(oauth_session, "async_ensure_token_valid"):
-                    await oauth_session.async_ensure_token_valid()
-                    fresh_token = oauth_session.token
-                elif hasattr(oauth_session, "async_get_valid_token"):
-                    fresh_token = await oauth_session.async_get_valid_token()
-                else:
-                    fresh_token = oauth_session.token
+                fresh_token = await async_get_oauth_token(oauth_session)
 
                 if fresh_token and fresh_token.get("access_token"):
                     new_access_token = fresh_token["access_token"]

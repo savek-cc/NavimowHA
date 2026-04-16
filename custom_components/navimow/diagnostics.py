@@ -24,11 +24,7 @@ async def async_get_config_entry_diagnostics(
         "mqtt_connected": sdk.is_connected if sdk else False,
         "device_count": len(devices),
         "coordinators": {
-            device_id: {
-                "last_data_source": coord._last_data_source,
-                "mqtt_stale": coord._last_mqtt_update is None,
-                "http_fallback_active": coord._last_http_fetch is not None,
-            }
+            device_id: coord.get_diagnostics_data()
             for device_id, coord in coordinators.items()
         },
         "config": {

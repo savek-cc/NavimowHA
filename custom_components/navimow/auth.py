@@ -1,4 +1,6 @@
 """OAuth2 implementation for Navimow integration."""
+from __future__ import annotations
+
 import logging
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
@@ -80,3 +82,23 @@ class NavimowOAuth2Implementation(LocalOAuth2Implementation):
             # 其他错误（网络等）原样抛出，不立即触发重新认证流程
             _LOGGER.warning("Navimow token refresh failed (possibly transient): %s", err)
             raise
+
+
+from homeassistant.helpers import config_entry_oauth2_flow as oauth2_flow
+
+
+async def async_get_oauth_token(
+    oauth_session: oauth2_flow.OAuth2Session,
+) -> dict[str, Any] | None:
+    """Get a valid token dict from an OAuth2 session, refreshing if needed.
+
+    Prefers async_ensure_token_valid (HA standard), then async_get_valid_token,
+    then falls back to the cached .token attribute.
+    Returns the full token dict or None if unavailable.
+    """
+    if hasattr(oauth_session, "async_ensure_token_valid"):
+        await oauth_session.async_ensure_token_valid()
+        return oauth_session.token
+    if hasattr(oauth_session, "async_get_valid_token"):
+        return await oauth_session.async_get_valid_token()
+    return getattr(oauth_session, "token", None)

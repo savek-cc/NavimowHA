@@ -1,4 +1,6 @@
 """DataUpdateCoordinator for Navimow integration."""
+from __future__ import annotations
+
 import logging
 import time
 from datetime import timedelta
@@ -18,6 +20,7 @@ from mower_sdk.models import (
 )
 from mower_sdk.sdk import NavimowSDK
 
+from .auth import async_get_oauth_token
 from .const import (
     DOMAIN,
     HTTP_FALLBACK_MIN_INTERVAL,
@@ -55,6 +58,7 @@ class NavimowCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._last_mqtt_update: float | None = None
         self._last_http_fetch: float | None = None
         self._last_data_source: str | None = None
+        self._was_available: bool | None = None  # tracks availability for log-when-unavailable
 
     async def async_setup(self) -> None:
         """Register callbacks from SDK."""
@@ -95,14 +99,7 @@ class NavimowCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if not self.oauth_session:
             return None
         try:
-            token: dict[str, Any] | None
-            if hasattr(self.oauth_session, "async_ensure_token_valid"):
-                await self.oauth_session.async_ensure_token_valid()
-                token = self.oauth_session.token
-            elif hasattr(self.oauth_session, "async_get_valid_token"):
-                token = await self.oauth_session.async_get_valid_token()
-            else:
-                token = self.oauth_session.token
+            token = await async_get_oauth_token(self.oauth_session)
         except ConfigEntryAuthFailed:
             # 确定性认证失败（refresh_token 缺失或被服务端拒绝）→ 直接上报，让 HA 引导用户重新认证
             raise
@@ -173,6 +170,16 @@ class NavimowCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._last_http_fetch,
         )
         self.data = self._build_data()
+
+        # log-when-unavailable: log once on transition, not on every poll
+        is_available = self._last_state is not None
+        if is_available != self._was_available:
+            if is_available:
+                _LOGGER.info("Device %s is now available", self.device.id)
+            else:
+                _LOGGER.warning("Device %s is now unavailable", self.device.id)
+            self._was_available = is_available
+
         return self.data
 
     def _handle_state(self, state: DeviceStateMessage) -> None:
@@ -213,6 +220,15 @@ class NavimowCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     def get_device_attributes(self) -> DeviceAttributesMessage | None:
         return self.data.get("attributes")
+
+    def get_diagnostics_data(self) -> dict[str, Any]:
+        """Return public diagnostics data for this device coordinator."""
+        return {
+            "last_data_source": self._last_data_source,
+            "mqtt_stale": self._last_mqtt_update is None,
+            "http_fallback_active": self._last_http_fetch is not None,
+            "device_available": self._last_state is not None,
+        }
 
     def get_device_info(self) -> Any | None:
         return self.data.get("device")

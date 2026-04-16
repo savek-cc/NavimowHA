@@ -94,9 +94,11 @@ class NavimowSensor(CoordinatorEntity[NavimowCoordinator], SensorEntity):
 
     @property
     def available(self) -> bool:
-        if self.coordinator.get_device_state() is not None:
-            return True
-        return super().available
+        """Return True if the coordinator has fresh data for the device."""
+        return (
+            super().available
+            and self.coordinator.get_device_state() is not None
+        )
 
     @property
     def native_value(self) -> Any:

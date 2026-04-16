@@ -102,15 +102,11 @@ class NavimowLawnMower(CoordinatorEntity[NavimowCoordinator], LawnMowerEntity):
 
     @property
     def available(self) -> bool:
-        """Keep entity available as long as cached state exists.
-
-        Broker-initiated MQTT disconnects (with paho auto-reconnect) are
-        transient; the entity should not flip to unavailable during the
-        brief reconnection window.
-        """
-        if self.coordinator.get_device_state() is not None:
-            return True
-        return super().available
+        """Return True if the coordinator has fresh data for the device."""
+        return (
+            super().available
+            and self.coordinator.get_device_state() is not None
+        )
 
     @property
     def activity(self) -> LawnMowerActivity | None:
